@@ -1,0 +1,56 @@
+name: Test Alpaca Stock Data
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-alpaca:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Get NVDA price and send to Discord
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+        run: |
+          curl --fail --silent --show-error \
+            -H "APCA-API-KEY-ID: $ALPACA_API_KEY" \
+            -H "APCA-API-SECRET-KEY: $ALPACA_API_SECRET" \
+            "https://data.alpaca.markets/v2/stocks/trades/latest?symbols=NVDA&feed=iex" \
+            > quote.json
+
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          with open("quote.json") as f:
+              data = json.load(f)
+
+          trade = data["trades"]["NVDA"]
+          price = trade["p"]
+          timestamp = trade["t"]
+
+          message = {
+              "content": (
+                  "📈 **Alpaca API Test Successful**\n"
+                  f"**NVDA:** ${price:.2f}\n"
+                  f"Feed: IEX\n"
+                  f"Timestamp: {timestamp}"
+              )
+          }
+
+          payload = json.dumps(message).encode()
+
+          request = urllib.request.Request(
+              os.environ["DISCORD_WEBHOOK_URL"],
+              data=payload,
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+
+          with urllib.request.urlopen(request) as response:
+              print("Discord status:", response.status)
+          PY
