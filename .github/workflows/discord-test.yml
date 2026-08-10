@@ -1,0 +1,17 @@
+name: Test Discord Bot
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-discord:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send test message to Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          curl -H "Content-Type: application/json" \
+            -d '{"content":"✅ Stock AI Bot is online! GitHub Actions → Discord connection successful."}' \
+            "$DISCORD_WEBHOOK_URL"
