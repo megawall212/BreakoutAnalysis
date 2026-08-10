@@ -1,0 +1,71 @@
+name: Test Alpaca News
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-news:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Get NVDA news
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
+
+        run: |
+          curl --fail --silent --show-error \
+            -H "APCA-API-KEY-ID: $ALPACA_API_KEY" \
+            -H "APCA-API-SECRET-KEY: $ALPACA_API_SECRET" \
+            "https://data.alpaca.markets/v1beta1/news?symbols=NVDA&limit=3&sort=desc" \
+            > news.json
+
+      - name: Build Discord message
+        run: |
+          python - <<'PY'
+          import json
+
+          with open("news.json") as f:
+              data = json.load(f)
+
+          articles = data.get("news", [])
+
+          if not articles:
+              text = (
+                  "📰 **Alpaca News API Test Successful**\n"
+                  "No recent NVDA articles were returned."
+              )
+          else:
+              lines = ["📰 **Latest NVDA News**", ""]
+
+              for article in articles[:3]:
+                  headline = article.get("headline", "No headline")
+                  source = article.get("source", "Unknown source")
+                  url = article.get("url", "")
+
+                  lines.append(f"• **{headline}**")
+                  lines.append(f"  Source: {source}")
+
+                  if url:
+                      lines.append(f"  {url}")
+
+                  lines.append("")
+
+              text = "\n".join(lines)
+
+          payload = {"content": text}
+
+          with open("discord_payload.json", "w") as f:
+              json.dump(payload, f)
+          PY
+
+      - name: Send to Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+        run: |
+          curl --fail --silent --show-error \
+            -H "Content-Type: application/json" \
+            -H "User-Agent: StockAIBot/1.0" \
+            -d @discord_payload.json \
+            "$DISCORD_WEBHOOK_URL"
