@@ -1,0 +1,58 @@
+name: Test Gemini AI
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-gemini:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Ask Gemini
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          curl --fail --silent --show-error \
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent" \
+            -H "Content-Type: application/json" \
+            -H "x-goog-api-key: $GEMINI_API_KEY" \
+            -X POST \
+            -d '{
+              "contents": [{
+                "parts": [{
+                  "text": "In one short sentence, say that the Stock AI Bot Gemini connection is working."
+                }]
+              }]
+            }' \
+            > gemini.json
+
+      - name: Build Discord message
+        run: |
+          python - <<'PY'
+          import json
+
+          with open("gemini.json") as f:
+              data = json.load(f)
+
+          text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+
+          payload = {
+              "content": (
+                  "🤖 **Gemini API Test Successful**\n"
+                  f"{text}"
+              )
+          }
+
+          with open("discord_payload.json", "w") as f:
+              json.dump(payload, f)
+          PY
+
+      - name: Send to Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          curl --fail --silent --show-error \
+            -H "Content-Type: application/json" \
+            -H "User-Agent: StockAIBot/1.0" \
+            -d @discord_payload.json \
+            "$DISCORD_WEBHOOK_URL"
