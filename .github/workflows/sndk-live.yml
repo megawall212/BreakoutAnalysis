@@ -1,0 +1,193 @@
+name: SNDK Live Monitor
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sndk-live:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Get SNDK snapshot
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
+        run: |
+          curl --fail --silent --show-error \
+            -H "APCA-API-KEY-ID: $ALPACA_API_KEY" \
+            -H "APCA-API-SECRET-KEY: $ALPACA_API_SECRET" \
+            "https://data.alpaca.markets/v2/stocks/snapshots?symbols=SNDK&feed=iex" \
+            > snapshot.json
+
+      - name: Get SNDK 1-minute bars
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
+        run: |
+          curl --fail --silent --show-error \
+            -H "APCA-API-KEY-ID: $ALPACA_API_KEY" \
+            -H "APCA-API-SECRET-KEY: $ALPACA_API_SECRET" \
+            "https://data.alpaca.markets/v2/stocks/SNDK/bars?timeframe=1Min&feed=iex&limit=1000&sort=asc" \
+            > bars.json
+
+      - name: Calculate SNDK movement
+        run: |
+          python - <<'PY'
+          import json
+          from datetime import datetime, timedelta, timezone
+
+          SYMBOL = "SNDK"
+
+          with open("snapshot.json") as f:
+              snapshots = json.load(f)
+
+          with open("bars.json") as f:
+              bar_data = json.load(f)
+
+          snap = snapshots[SYMBOL]
+
+          latest_trade = snap["latestTrade"]
+          current_price = float(latest_trade["p"])
+          current_time_raw = latest_trade["t"]
+
+          prev_close = float(snap["prevDailyBar"]["c"])
+
+          daily_change = (
+              (current_price - prev_close) / prev_close * 100
+          )
+
+          bars = bar_data.get("bars", [])
+
+          def parse_time(ts):
+              ts = ts.rstrip("Z")
+
+              if "." in ts:
+                  base, frac = ts.split(".", 1)
+                  frac = (frac + "000000")[:6]
+                  ts = f"{base}.{frac}"
+
+              return datetime.fromisoformat(ts).replace(
+                  tzinfo=timezone.utc
+              )
+
+          current_time = parse_time(current_time_raw)
+
+          def price_before(minutes):
+              target = current_time - timedelta(minutes=minutes)
+
+              eligible = []
+
+              for bar in bars:
+                  bar_time = parse_time(bar["t"])
+
+                  if bar_time <= target:
+                      eligible.append((bar_time, float(bar["c"])))
+
+              if not eligible:
+                  return None
+
+              eligible.sort(key=lambda x: x[0])
+
+              return eligible[-1][1]
+
+          price_5m = price_before(5)
+          price_15m = price_before(15)
+
+          def percent_change(old_price):
+              if not old_price:
+                  return None
+
+              return (
+                  (current_price - old_price)
+                  / old_price
+                  * 100
+              )
+
+          change_5m = percent_change(price_5m)
+          change_15m = percent_change(price_15m)
+
+          def fmt_change(value):
+              if value is None:
+                  return "N/A"
+
+              arrow = "🟢" if value >= 0 else "🔴"
+
+              return f"{arrow} {value:+.2f}%"
+
+          payload = {
+              "username": "Stock AI Bot",
+
+              "embeds": [
+                  {
+                      "title": "📊 SNDK Live Market Data",
+
+                      "description": (
+                          "Real market data from Alpaca IEX feed"
+                      ),
+
+                      "fields": [
+                          {
+                              "name": "💵 Current Price",
+                              "value": f"${current_price:.2f}",
+                              "inline": True
+                          },
+
+                          {
+                              "name": "⏱ 5 Min",
+                              "value": fmt_change(change_5m),
+                              "inline": True
+                          },
+
+                          {
+                              "name": "⏱ 15 Min",
+                              "value": fmt_change(change_15m),
+                              "inline": True
+                          },
+
+                          {
+                              "name": "📅 Today",
+                              "value": fmt_change(daily_change),
+                              "inline": True
+                          },
+
+                          {
+                              "name": "📍 Previous Close",
+                              "value": f"${prev_close:.2f}",
+                              "inline": True
+                          },
+
+                          {
+                              "name": "📡 Data Feed",
+                              "value": "Alpaca IEX",
+                              "inline": True
+                          }
+                      ],
+
+                      "footer": {
+                          "text": (
+                              "Stock AI Bot • SNDK • "
+                              + current_time_raw
+                          )
+                      }
+                  }
+              ]
+          }
+
+          with open("discord_payload.json", "w") as f:
+              json.dump(payload, f, ensure_ascii=False)
+
+          print("Current:", current_price)
+          print("5m:", change_5m)
+          print("15m:", change_15m)
+          print("Today:", daily_change)
+          PY
+
+      - name: Send SNDK data to Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          curl --fail --silent --show-error \
+            -H "Content-Type: application/json" \
+            -H "User-Agent: StockAIBot/1.0" \
+            -d @discord_payload.json \
+            "$DISCORD_WEBHOOK_URL"
